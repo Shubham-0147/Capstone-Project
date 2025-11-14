@@ -1,0 +1,470 @@
+# data/download_data.py
+"""
+Script to download historical price data using Yahoo Finance.
+"""
+import yfinance as yf
+import pandas as pd
+
+def download_data(ticker: str, start_date: str, end_date: str, filename: str = None) -> pd.DataFrame:
+    """
+    Download historical data for the given ticker using Yahoo Finance.
+    """
+    df = yf.download(ticker, start=start_date, end=end_date)
+    if df.empty:
+        raise ValueError(f"No data found for ticker {ticker}")
+    if filename:
+        df.to_csv(filename, index=True)
+    return df
+
+if __name__ == "__main__":
+    # Example usage: download Apple data from 2020 to 2024
+    data = download_data("AAPL", "2020-01-01", "2024-01-01", filename="data/AAPL.csv")
+    print(f"Downloaded data:\n{data.head()}")
+# data/preprocess_data.py
+"""
+Preprocess financial time series data.
+"""
+import numpy as np
+import pandas as pd
+
+def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Perform basic preprocessing on raw price DataFrame:
+    - Sort by time, fill missing values, compute returns.
+    """
+    data = df.copy()
+    data.sort_index(inplace=True)
+    # Forward-fill missing values
+    data.fillna(method='ffill', inplace=True)
+    # Compute daily returns and log-returns
+    if 'Close' in data.columns:
+        data['Return'] = data['Close'].pct_change().fillna(0.0)
+        data['LogReturn'] = np.log1p(data['Return'])
+    return data
+
+if __name__ == "__main__":
+    # Example: preprocess downloaded data
+    raw = pd.read_csv("data/AAPL.csv", index_col=0, parse_dates=True)
+    processed = preprocess_data(raw)
+    print(processed.head())
+# env/trading_env.py
+"""
+Custom Gymnasium trading environment simulating realistic market conditions.
+"""
+import gymnasium as gym
+from gymnasium import spaces
+import numpy as np
+import pandas as pd
+
+class TradingEnv(gym.Env):
+    """
+    Trading environment: actions {0=hold, 1=buy, 2=sell}. 
+    Observation = [current_price, net_worth, position].
+    Simulates slippage and transaction costs.
+    """
+    metadata = {"render.modes": ["human"]}
+
+    def __init__(self, data: pd.DataFrame, initial_balance: float = 10000.0,
+                 transaction_cost: float = 0.001, slippage: float = 0.001):
+        super(TradingEnv, self).__init__()
+        self.data = data.reset_index(drop=True)
+        self.prices = self.data["Close"].values
+        self.initial_balance = initial_balance
+        self.transaction_cost = transaction_cost
+        self.slippage = slippage
+        self.current_step = 0
+        self.position = 0  # 0=flat, 1=long
+        self.balance = initial_balance
+        self.shares_held = 0
+        self.net_worth = initial_balance
+
+        # Action space: hold, buy, sell
+        self.action_space = spaces.Discrete(3)
+        # Observation: [price, net_worth, position]
+        high = np.array([np.finfo(np.float32).max, np.finfo(np.float32).max, 1.0])
+        low = np.array([0.0, 0.0, -1.0])
+        self.observation_space = spaces.Box(low=low, high=high, dtype=np.float32)
+
+    def reset(self):
+        self.current_step = 0
+        self.position = 0
+        self.balance = self.initial_balance
+        self.shares_held = 0
+        self.net_worth = self.initial_balance
+        return self._get_observation(), {}
+
+    def _get_observation(self):
+        price = self.prices[self.current_step]
+        obs = np.array([price, self.net_worth, float(self.position)], dtype=np.float32)
+        return obs
+
+    def step(self, action):
+        """
+        Execute one time step: trade according to the action.
+        """
+        price = self.prices[self.current_step]
+        prev_worth = self.net_worth
+
+        # Buy action
+        if action == 1:  
+            buy_price = price * (1 + self.slippage)
+            # Calculate number of shares to buy
+            max_shares = self.balance // (buy_price * (1 + self.transaction_cost))
+            if max_shares > 0:
+                cost = max_shares * buy_price * (1 + self.transaction_cost)
+                self.balance -= cost
+                self.shares_held += max_shares
+                self.position = 1
+
+        # Sell action
+        elif action == 2:  
+            sell_price = price * (1 - self.slippage)
+            if self.shares_held > 0:
+                proceeds = self.shares_held * sell_price * (1 - self.transaction_cost)
+                self.balance += proceeds
+                self.shares_held = 0
+                self.position = 0
+
+        # Advance step
+        self.current_step += 1
+        done = self.current_step >= len(self.prices) - 1
+
+        # Update net worth
+        new_price = self.prices[self.current_step]
+        self.net_worth = self.balance + self.shares_held * new_price
+        reward = self.net_worth - prev_worth  # profit as reward
+
+        info = {"net_worth": self.net_worth}
+        return self._get_observation(), reward, done, False, info
+
+    def render(self, mode="human"):
+        print(f"Step: {self.current_step}")
+        print(f"Price: {self.prices[self.current_step]:.2f}, Position: {self.position}, Net worth: {self.net_worth:.2f}")
+# agents/ppo_agent.py
+"""
+PPO agent using Stable-Baselines3.
+"""
+from stable_baselines3 import PPO
+
+def create_ppo_agent(env, **kwargs):
+    """
+    Create a PPO agent for the given environment.
+    """
+    model = PPO("MlpPolicy", env, **kwargs)
+    return model
+# agents/dqn_agent.py
+"""
+DQN agent using Stable-Baselines3.
+"""
+from stable_baselines3 import DQN
+
+def create_dqn_agent(env, **kwargs):
+    """
+    Create a DQN agent for the given environment.
+    """
+    model = DQN("MlpPolicy", env, **kwargs)
+    return model
+# train/train.py
+"""
+Training script for the trading agents.
+Parses a YAML config, trains PPO or DQN, and saves the model.
+"""
+import argparse
+import yaml
+import logging
+import pandas as pd
+from agents.ppo_agent import create_ppo_agent
+from agents.dqn_agent import create_dqn_agent
+from env.trading_env import TradingEnv
+from utils.seed import set_seeds
+
+def train(cfg):
+    """
+    Train an RL agent as specified in the config dictionary.
+    """
+    # Set seeds for reproducibility
+    seed = cfg.get("seed", 0)
+    set_seeds(seed)
+
+    # Load and preprocess data
+    data = pd.read_csv(cfg["data_path"], index_col=0)
+    env = TradingEnv(data,
+                     initial_balance=cfg.get("initial_balance", 10000.0),
+                     transaction_cost=cfg.get("transaction_cost", 0.001),
+                     slippage=cfg.get("slippage", 0.001))
+
+    # Initialize agent
+    algo = cfg.get("algo", "PPO")
+    if algo == "PPO":
+        model = create_ppo_agent(env, verbose=1,
+                                 learning_rate=cfg.get("learning_rate", 3e-4),
+                                 tensorboard_log=cfg.get("tensorboard_log", "./logs"))
+    elif algo == "DQN":
+        model = create_dqn_agent(env, verbose=1,
+                                 learning_rate=cfg.get("learning_rate", 1e-4),
+                                 tensorboard_log=cfg.get("tensorboard_log", "./logs"))
+    else:
+        raise ValueError(f"Unknown algorithm: {algo}")
+
+    # Train the model
+    total_timesteps = cfg.get("total_timesteps", 100000)
+    logging.info(f"Starting training: algo={algo}, timesteps={total_timesteps}")
+    model.learn(total_timesteps=total_timesteps)
+
+    # Save the model
+    model_path = f"models/{algo.lower()}_model.zip"
+    model.save(model_path)
+    logging.info(f"Saved trained model to {model_path}")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Train RL trading agent")
+    parser.add_argument("--config", type=str, default="config/config.yaml",
+                        help="Path to YAML config file")
+    args = parser.parse_args()
+
+    # Load config
+    with open(args.config, "r") as f:
+        config = yaml.safe_load(f)
+    logging.basicConfig(level=logging.INFO)
+    logging.info(f"Config: {config}")
+
+    train(config)
+# eval/metrics.py
+"""
+Performance metrics for trading strategies.
+"""
+import numpy as np
+
+def sharpe_ratio(returns: list, risk_free: float = 0.0) -> float:
+    """
+    Compute annualized Sharpe Ratio from a list of returns.
+    """
+    returns = np.array(returns)
+    excess = returns - risk_free
+    if returns.std() == 0:
+        return 0.0
+    return (excess.mean() / returns.std()) * np.sqrt(252)
+
+def sortino_ratio(returns: list, risk_free: float = 0.0) -> float:
+    """
+    Compute annualized Sortino Ratio from a list of returns.
+    """
+    returns = np.array(returns)
+    negative = returns[returns < risk_free]
+    if len(negative) == 0 or returns.mean() == 0:
+        return 0.0
+    downside_std = negative.std() if negative.std() > 0 else 0.0
+    if downside_std == 0:
+        return 0.0
+    excess = returns.mean() - risk_free
+    return (excess / downside_std) * np.sqrt(252)
+
+def max_drawdown(returns: list) -> float:
+    """
+    Compute maximum drawdown from a list of returns.
+    """
+    wealth = np.cumprod(1 + np.array(returns))
+    peak = np.maximum.accumulate(wealth)
+    drawdowns = (peak - wealth) / peak
+    return np.max(drawdowns)
+# eval/backtest.py
+"""
+Backtesting script: runs a trained agent on test data and reports metrics.
+"""
+import pandas as pd
+from env.trading_env import TradingEnv
+from stable_baselines3 import PPO, DQN
+from eval.metrics import sharpe_ratio, sortino_ratio, max_drawdown
+
+def backtest(model_path: str, data_path: str, algo: str):
+    """
+    Evaluate a trained model on test data and print performance metrics.
+    """
+    # Load test data
+    data = pd.read_csv(data_path, index_col=0)
+    env = TradingEnv(data)
+    # Load model
+    if algo == "PPO":
+        model = PPO.load(model_path)
+    else:
+        model = DQN.load(model_path)
+
+    obs, _ = env.reset()
+    done = False
+    returns = []
+    while not done:
+        action, _ = model.predict(obs, deterministic=True)
+        obs, reward, done, _, info = env.step(int(action))
+        returns.append(reward / env.initial_balance)  # normalize returns
+
+    # Compute metrics
+    sharpe = sharpe_ratio(returns)
+    sortino = sortino_ratio(returns)
+    mdd = max_drawdown(returns)
+    print(f"Sharpe Ratio: {sharpe:.2f}")
+    print(f"Sortino Ratio: {sortino:.2f}")
+    print(f"Max Drawdown: {mdd:.2%}")
+    return {"sharpe": sharpe, "sortino": sortino, "max_drawdown": mdd}
+# realtime/server.py
+"""
+FastAPI server for live trading simulation.
+Receives market data and returns agent action plus latency.
+"""
+from fastapi import FastAPI
+from pydantic import BaseModel
+import time
+import numpy as np
+from stable_baselines3 import PPO
+
+app = FastAPI()
+
+# Load pretrained model (PPO)
+model = PPO.load("models/ppo_model.zip")
+
+class MarketData(BaseModel):
+    price: float
+    timestamp: float
+
+@app.get("/health")
+def health_check():
+    """Health check endpoint."""
+    return {"status": "running"}
+
+@app.post("/trade")
+def get_action(data: MarketData):
+    """
+    Given new market data, predict action and measure latency.
+    """
+    start_time = time.time()
+    # Create observation: [price, dummy_net_worth, dummy_position]
+    obs = np.array([[data.price, 0.0, 0.0]])
+    action, _ = model.predict(obs, deterministic=True)
+    latency_ms = (time.time() - start_time) * 1000
+    return {"action": int(action[0]), "latency_ms": latency_ms}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+# utils/seed.py
+"""
+Set random seeds for reproducibility.
+"""
+import random
+import numpy as np
+import torch
+
+def set_seeds(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+# utils/visualize.py
+"""
+Visualization helper functions.
+"""
+import matplotlib.pyplot as plt
+import numpy as np
+
+def plot_equity_curve(dates, values, title="Equity Curve"):
+    """
+    Plot an equity (portfolio value) curve over time.
+    """
+    plt.figure(figsize=(10, 6))
+    plt.plot(dates, values, label="Portfolio Value")
+    plt.title(title)
+    plt.xlabel("Time")
+    plt.ylabel("Portfolio Value")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+def plot_drawdown(values, title="Drawdown"):
+    """
+    Plot drawdown series given equity values.
+    """
+    values = np.array(values)
+    peaks = np.maximum.accumulate(values)
+    drawdown = (peaks - values) / peaks
+    plt.figure(figsize=(10, 4))
+    plt.plot(drawdown, label="Drawdown", color="red")
+    plt.title(title)
+    plt.xlabel("Time")
+    plt.ylabel("Drawdown")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environment
+.env/
+.env/*
+venv/
+venv/*
+.env/
+
+# Data files
+data/*.csv
+
+# Model checkpoints & logs
+models/
+logs/
+
+# Notebook checkpoints
+*.ipynb_checkpoints
+# Docker files (if built)
+.env
+
+# Jupyter scratch
+.ipynb_checkpoints/
+# requirements.txt
+gymnasium
+torch
+stable-baselines3
+fastapi
+uvicorn
+shap
+pandas
+numpy
+optuna
+matplotlib
+pyyaml
+# environment.yml
+name: trading-rl
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    - stable-baselines3
+    - gymnasium
+    - torch
+    - fastapi
+    - uvicorn
+    - shap
+    - pandas
+    - numpy
+    - optuna
+    - matplotlib
+    - pyyaml
+# Dockerfile
+FROM python:3.10-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 8000
+CMD ["uvicorn", "realtime.server:app", "--host", "0.0.0.0", "--port", "8000"]
+# docker-compose.yml
+version: '3.8'
+services:
+  trading-rl:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
