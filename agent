@@ -1,0 +1,23 @@
+ # agents/ppo_agent.py
+ """
+ PPO agent using Stable-Baselines3.
+ """
+ from stable_baselines3 import PPO
+ def create_ppo_agent(env, **kwargs):
+ """
+    Create a PPO agent for the given environment.
+    """
+ model = PPO("MlpPolicy", env, **kwargs)
+ return model
+ # agents/dqn_agent.py
+ """
+ DQN agent using Stable-Baselines3.
+ """
+ from stable_baselines3 import DQN
+ def create_dqn_agent(env, **kwargs):
+ """
+    Create a DQN agent for the given environment.
+    """
+ model = DQN("MlpPolicy", env, **kwargs)
+ return model
+ 
