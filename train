@@ -1,0 +1,61 @@
+ # train/train.py
+ """
+ Training script for the trading agents.
+ Parses a YAML config, trains PPO or DQN, and saves the model.
+ """
+ 7
+import argparse
+ import yaml
+ import logging
+ import pandas as pd
+ from agents.ppo_agent import create_ppo_agent
+ from agents.dqn_agent import create_dqn_agent
+ from env.trading_env import TradingEnv
+ from utils.seed import set_seeds
+ def train(cfg):
+ """
+    Train an RL agent as specified in the config dictionary.
+    """
+ # Set seeds for reproducibility
+ seed = cfg.get("seed", 0)
+ set_seeds(seed)
+ # Load and preprocess data
+ data = pd.read_csv(cfg["data_path"], index_col=0)
+ env = TradingEnv(data,
+ initial_balance=cfg.get("initial_balance", 10000.0),
+ transaction_cost=cfg.get("transaction_cost", 0.001),
+ slippage=cfg.get("slippage", 0.001))
+ # Initialize agent
+ algo = cfg.get("algo", "PPO")
+ if algo == "PPO":
+ model = create_ppo_agent(env, verbose=1,
+ learning_rate=cfg.get("learning_rate", 3e-4),
+ tensorboard_log=cfg.get("tensorboard_log", "./
+ logs"))
+ elif algo == "DQN":
+ model = create_dqn_agent(env, verbose=1,
+ learning_rate=cfg.get("learning_rate", 1e-4),
+ tensorboard_log=cfg.get("tensorboard_log", "./
+ logs"))
+ else:
+ raise ValueError(f"Unknown algorithm: {algo}")
+ # Train the model
+ total_timesteps = cfg.get("total_timesteps", 100000)
+ logging.info(f"Starting training: algo={algo}, timesteps={total_timesteps}")
+ model.learn(total_timesteps=total_timesteps)
+ # Save the model
+ model_path = f"models/{algo.lower()}_model.zip"
+ model.save(model_path)
+ logging.info(f"Saved trained model to {model_path}")
+ 8
+if __name__ == "__main__":
+ parser = argparse.ArgumentParser(description="Train RL trading agent")
+ parser.add_argument("--config", type=str, default="config/config.yaml",
+ help="Path to YAML config file")
+ args = parser.parse_args()
+ # Load config
+ with open(args.config, "r") as f:
+ config = yaml.safe_load(f)
+ logging.basicConfig(level=logging.INFO)
+ logging.info(f"Config: {config}")
+ train(config)
