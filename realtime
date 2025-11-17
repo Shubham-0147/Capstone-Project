@@ -1,0 +1,35 @@
+# realtime/server.py
+ """
+ FastAPI server for live trading simulation.
+ Receives market data and returns agent action plus latency.
+ """
+ from fastapi import FastAPI
+ from pydantic import BaseModel
+ import time
+ import numpy as np
+ from stable_baselines3 import PPO
+ app = FastAPI()
+ # Load pretrained model (PPO)
+ model = PPO.load("models/ppo_model.zip")
+ class MarketData(BaseModel):
+ price: float
+ timestamp: float
+ @app.get("/health")
+ def health_check():
+ """Health check endpoint."""
+ return {"status": "running"}
+ @app.post("/trade")
+ def get_action(data: MarketData):
+ """
+    Given new market data, predict action and measure latency.
+    """
+ start_time = time.time()
+ # Create observation: [price, dummy_net_worth, dummy_position]
+ obs = np.array([[data.price, 0.0, 0.0]])
+ action, _ = model.predict(obs, deterministic=True)
+ latency_ms = (time.time()- start_time) * 1000
+ return {"action": int(action[0]), "latency_ms": latency_ms}
+ if __name__ == "__main__":
+ import uvicorn
+ uvicorn.run(app, host="0.0.0.0", port=8000)
+ 
