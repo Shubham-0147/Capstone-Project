@@ -1,0 +1,70 @@
+# eval/metrics.py
+ """
+ Performance metrics for trading strategies.
+ """
+ import numpy as np
+ def sharpe_ratio(returns: list, risk_free: float = 0.0)-> float:
+ """
+    Compute annualized Sharpe Ratio from a list of returns.
+    """
+ returns = np.array(returns)
+ excess = returns- risk_free
+ if returns.std() == 0:
+ return 0.0
+ return (excess.mean() / returns.std()) * np.sqrt(252)
+ def sortino_ratio(returns: list, risk_free: float = 0.0)-> float:
+ """
+    Compute annualized Sortino Ratio from a list of returns.
+    """
+ returns = np.array(returns)
+ negative = returns[returns < risk_free]
+ if len(negative) == 0 or returns.mean() == 0:
+ return 0.0
+ downside_std = negative.std() if negative.std() > 0 else 0.0
+ if downside_std == 0:
+ return 0.0
+ excess = returns.mean()- risk_free
+ return (excess / downside_std) * np.sqrt(252)
+ def max_drawdown(returns: list)-> float:
+"""
+    Compute maximum drawdown from a list of returns.
+    """
+ wealth = np.cumprod(1 + np.array(returns))
+ peak = np.maximum.accumulate(wealth)
+ drawdowns = (peak- wealth) / peak
+ return np.max(drawdowns)
+ # eval/backtest.py
+ """
+ Backtesting script: runs a trained agent on test data and reports metrics.
+ """
+ import pandas as pd
+ from env.trading_env import TradingEnv
+ from stable_baselines3 import PPO, DQN
+ from eval.metrics import sharpe_ratio, sortino_ratio, max_drawdown
+ def backtest(model_path: str, data_path: str, algo: str):
+ """
+    Evaluate a trained model on test data and print performance metrics.
+    """
+ # Load test data
+ data = pd.read_csv(data_path, index_col=0)
+ env = TradingEnv(data)
+ # Load model
+ if algo == "PPO":
+ model = PPO.load(model_path)
+ else:
+ model = DQN.load(model_path)
+ obs, _ = env.reset()
+ done = False
+ returns = []
+ while not done:
+ action, _ = model.predict(obs, deterministic=True)
+ obs, reward, done, _, info = env.step(int(action))
+ returns.append(reward / env.initial_balance) # normalize returns
+ # Compute metrics
+ sharpe = sharpe_ratio(returns)
+ sortino = sortino_ratio(returns)
+ mdd = max_drawdown(returns)
+ print(f"Sharpe Ratio: {sharpe:.2f}")
+ print(f"Sortino Ratio: {sortino:.2f}")
+ print(f"Max Drawdown: {mdd:.2%}")
+ return {"sharpe": sharpe, "sortino": sortino, "max_drawdown": mdd}
