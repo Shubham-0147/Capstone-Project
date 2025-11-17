@@ -40,7 +40,6 @@
  data['Return'] = data['Close'].pct_change().fillna(0.0)
  data['LogReturn'] = np.log1p(data['Return'])
  return data
- 4
 if __name__ == "__main__":
  # Example: preprocess downloaded data
  raw = pd.read_csv("data/AAPL.csv", index_col=0, parse_dates=True)
