@@ -1,0 +1,61 @@
+# utils/seed.py
+ """
+ Set random seeds for reproducibility.
+ """
+ import random
+import numpy as np
+ import torch
+ def set_seeds(seed: int):
+ random.seed(seed)
+ np.random.seed(seed)
+ torch.manual_seed(seed)
+ if torch.cuda.is_available():
+ torch.cuda.manual_seed(seed)
+ # utils/visualize.py
+ """
+ Visualization helper functions.
+ """
+ import matplotlib.pyplot as plt
+ import numpy as np
+ def plot_equity_curve(dates, values, title="Equity Curve"):
+ """
+    Plot an equity (portfolio value) curve over time.
+    """
+ plt.figure(figsize=(10, 6))
+ plt.plot(dates, values, label="Portfolio Value")
+ plt.title(title)
+ plt.xlabel("Time")
+ plt.ylabel("Portfolio Value")
+ plt.legend()
+ plt.grid(True)
+ plt.show()
+ def plot_drawdown(values, title="Drawdown"):
+ """
+    Plot drawdown series given equity values.
+    """
+ values = np.array(values)
+ peaks = np.maximum.accumulate(values)
+ drawdown = (peaks- values) / peaks
+ plt.figure(figsize=(10, 4))
+ plt.plot(drawdown, label="Drawdown", color="red")
+ plt.title(title)
+ plt.xlabel("Time")
+ plt.ylabel("Drawdown")
+ plt.legend()
+ plt.grid(True)
+ plt.show()
+# Byte-compiled / optimized / DLL files
+ __pycache__/
+ *.py[cod]
+ *.so
+ # Virtual environment
+ .env/
+ .env/*
+ venv/
+ venv/*
+ .env/
+ # Data files
+ data/*.csv
+ # Model checkpoints & logs
+ models/
+ logs/
