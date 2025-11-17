@@ -3,7 +3,6 @@
  Training script for the trading agents.
  Parses a YAML config, trains PPO or DQN, and saves the model.
  """
- 7
 import argparse
  import yaml
  import logging
@@ -47,7 +46,6 @@ import argparse
  model_path = f"models/{algo.lower()}_model.zip"
  model.save(model_path)
  logging.info(f"Saved trained model to {model_path}")
- 8
 if __name__ == "__main__":
  parser = argparse.ArgumentParser(description="Train RL trading agent")
  parser.add_argument("--config", type=str, default="config/config.yaml",
