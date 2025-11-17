@@ -34,7 +34,6 @@
  low = np.array([0.0, 0.0,-1.0])
  self.observation_space = spaces.Box(low=low, high=high,
  dtype=np.float32)
- 5
 def reset(self):
  self.current_step = 0
  self.position = 0
@@ -76,7 +75,6 @@ self.transaction_cost)
  # Advance step
  self.current_step += 1
  done = self.current_step >= len(self.prices)-1
- 6
 # Update net worth
  new_price = self.prices[self.current_step]
  self.net_worth = self.balance + self.shares_held * new_price
