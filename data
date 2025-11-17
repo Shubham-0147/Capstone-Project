@@ -1,0 +1,48 @@
+# data/download_data.py
+ """
+ Script to download historical price data using Yahoo Finance.
+ """
+ import yfinance as yf
+ import pandas as pd
+ def download_data(ticker: str, start_date: str, end_date: str, filename: str =
+ None)-> pd.DataFrame:
+ """
+    Download historical data for the given ticker using Yahoo Finance.
+    """
+ df = yf.download(ticker, start=start_date, end=end_date)
+ if df.empty:
+ raise ValueError(f"No data found for ticker {ticker}")
+ if filename:
+ df.to_csv(filename, index=True)
+ return df
+ if __name__ == "__main__":
+ # Example usage: download Apple data from 2020 to 2024
+ data = download_data("AAPL", "2020-01-01", "2024-01-01", filename="data/
+ AAPL.csv")
+ print(f"Downloaded data:\n{data.head()}")
+ # data/preprocess_data.py
+ """
+ Preprocess financial time series data.
+ """
+ import numpy as np
+ import pandas as pd
+ def preprocess_data(df: pd.DataFrame)-> pd.DataFrame:
+ """
+    Perform basic preprocessing on raw price DataFrame:
+    - Sort by time, fill missing values, compute returns.
+    """
+ data = df.copy()
+ data.sort_index(inplace=True)
+ # Forward-fill missing values
+ data.fillna(method='ffill', inplace=True)
+ # Compute daily returns and log-returns
+ if 'Close' in data.columns:
+ data['Return'] = data['Close'].pct_change().fillna(0.0)
+ data['LogReturn'] = np.log1p(data['Return'])
+ return data
+ 4
+if __name__ == "__main__":
+ # Example: preprocess downloaded data
+ raw = pd.read_csv("data/AAPL.csv", index_col=0, parse_dates=True)
+ processed = preprocess_data(raw)
+ print(processed.head())
